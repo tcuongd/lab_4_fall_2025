@@ -16,7 +16,12 @@
 from launch import LaunchDescription
 from launch.actions import RegisterEventHandler
 from launch.event_handlers import OnProcessExit
-from launch.substitutions import Command, FindExecutable, PathJoinSubstitution, ThisLaunchFileDir
+from launch.substitutions import (
+    Command,
+    FindExecutable,
+    PathJoinSubstitution,
+    ThisLaunchFileDir,
+)
 
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -68,28 +73,46 @@ def generate_launch_description():
     #     output="log",
     #     arguments=["-d", rviz_config_file],
     # )
-#    joy_node = Node(
-#        package="joy_linux",
-#        executable="joy_linux_node",
-#        output="both",
-#    )
+    #    joy_node = Node(
+    #        package="joy_linux",
+    #        executable="joy_linux_node",
+    #        output="both",
+    #    )
 
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["joint_state_broadcaster", "--controller-manager", "/controller_manager", "--controller-manager-timeout", "30"],
+        arguments=[
+            "joint_state_broadcaster",
+            "--controller-manager",
+            "/controller_manager",
+            "--controller-manager-timeout",
+            "30",
+        ],
     )
 
     imu_sensor_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["imu_sensor_broadcaster", "--controller-manager", "/controller_manager", "--controller-manager-timeout", "30"],
+        arguments=[
+            "imu_sensor_broadcaster",
+            "--controller-manager",
+            "/controller_manager",
+            "--controller-manager-timeout",
+            "30",
+        ],
     )
 
     robot_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["forward_command_controller", "--controller-manager", "/controller_manager", "--controller-manager-timeout", "30"],
+        arguments=[
+            "forward_command_controller",
+            "--controller-manager",
+            "/controller_manager",
+            "--controller-manager-timeout",
+            "30",
+        ],
     )
 
     # Delay rviz start after `joint_state_broadcaster`
@@ -108,16 +131,18 @@ def generate_launch_description():
     # )
 
     # Delay start of robot_controller after `joint_state_broadcaster`
-    delay_robot_controller_spawner_after_joint_state_broadcaster_spawner = RegisterEventHandler(
-        event_handler=OnProcessExit(
-            target_action=joint_state_broadcaster_spawner,
-            on_exit=[robot_controller_spawner],
+    delay_robot_controller_spawner_after_joint_state_broadcaster_spawner = (
+        RegisterEventHandler(
+            event_handler=OnProcessExit(
+                target_action=joint_state_broadcaster_spawner,
+                on_exit=[robot_controller_spawner],
+            )
         )
     )
 
     nodes = [
         control_node,
- #       joy_node,
+        #       joy_node,
         robot_state_pub_node,
         joint_state_broadcaster_spawner,
         imu_sensor_broadcaster_spawner,

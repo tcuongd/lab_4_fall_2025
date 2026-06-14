@@ -1,2 +1,7 @@
 .DS_Store
 __pycache__
+
+frames/
+leg_simulation.mp4
+
+*.log

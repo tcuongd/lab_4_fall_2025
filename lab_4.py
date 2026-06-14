@@ -71,7 +71,11 @@ class InverseKinematics(Node):
         self.joint_positions = None
         self.joint_velocities = None
         self.target_joint_positions = None
+        self.initial_joint_positions = None
         self.counter = 0
+        self.standup_counter = 0
+        self.standup_steps = 200  # 2 seconds at 100 Hz
+        self.standup_complete = False
 
         # Trotting gate positions, already implemented
         touch_down_position = np.array([0.05, 0.0, -0.14])
@@ -260,6 +264,13 @@ class InverseKinematics(Node):
             [msg.velocity[msg.name.index(joint)] for joint in joints_of_interest]
         )
 
+        # Capture initial joint positions on first reading
+        if self.initial_joint_positions is None:
+            self.initial_joint_positions = self.joint_positions.copy()
+            self.get_logger().info(
+                f"Captured initial joint positions: {self.initial_joint_positions}"
+            )
+
     def inverse_kinematics_single_leg(
         self, target_ee, leg_index, initial_guess=[0.0, 0.0, 0.0]
     ):
@@ -407,16 +418,44 @@ class InverseKinematics(Node):
         return target_ee, target_joint_positions
 
     def ik_timer_callback(self):
-        if self.joint_positions is not None:
+        if self.joint_positions is None or self.initial_joint_positions is None:
+            return
+
+        if not self.standup_complete:
+            # Standup phase: interpolate from initial position to first gait target
+            alpha = self.standup_counter / self.standup_steps
+            # Smooth cubic interpolation (ease in/out)
+            alpha = 3 * alpha**2 - 2 * alpha**3
+            first_gait_target = self.target_joint_positions_cache[0]
+            self.target_joint_positions = (
+                self.initial_joint_positions * (1 - alpha) + first_gait_target * alpha
+            )
+            self.standup_counter += 1
+
+            current_ee = self.forward_kinematics(self.joint_positions)
+            target_ee = self.forward_kinematics(self.target_joint_positions)
+            self.get_logger().info(
+                f"[STANDUP {self.standup_counter}/{self.standup_steps}] "
+                f"Target EE: {target_ee}, "
+                f"Current EE: {current_ee}, "
+                f"Target Angles: {self.target_joint_positions}, "
+                f"Current Angles: {self.joint_positions}"
+            )
+
+            if self.standup_counter >= self.standup_steps:
+                self.standup_complete = True
+                self.get_logger().info("Standup complete, starting gait")
+        else:
+            # Normal gait phase
             target_ee, self.target_joint_positions = self.get_target_joint_positions()
             current_ee = self.forward_kinematics(self.joint_positions)
 
             self.get_logger().info(
-                f"Target EE: {target_ee}, \
-                Current EE: {current_ee}, \
-                Target Angles: {self.target_joint_positions}, \
-                Target Angles to EE: {self.forward_kinematics(self.target_joint_positions)}, \
-                Current Angles: {self.joint_positions}"
+                f"Target EE: {target_ee}, "
+                f"Current EE: {current_ee}, "
+                f"Target Angles: {self.target_joint_positions}, "
+                f"Target Angles to EE: {self.forward_kinematics(self.target_joint_positions)}, "
+                f"Current Angles: {self.joint_positions}"
             )
 
     def pd_timer_callback(self):

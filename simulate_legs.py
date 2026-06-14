@@ -375,40 +375,72 @@ def main():
     leg_names = ["Front-Right", "Front-Left", "Back-Right", "Back-Left"]
     hip_x_offsets = [0.075, 0.075, -0.075, -0.075]
 
+    # Initial joint positions from real robot log (real_run_0.log)
+    initial_joint_positions = np.array(
+        [0.011, -0.013, 0.673, 0.046, 0.065, -0.683, 0.023, -0.042, 0.693, -0.016, 0.008, -0.664]
+    )
+
     # Get triangle waypoints and use the exact same interpolation as lab_4.py
     triangle_positions = get_triangle_positions()
     t_values = np.arange(0, 1, 0.02)  # Same as lab_4.py: 50 steps
-    trajectories = []
-    for leg_idx in range(4):
-        traj = [interpolate_triangle(triangle_positions[leg_idx], t) for t in t_values]
-        trajectories.append(np.array(traj))
-    n_frames = len(t_values)
-    print(f"Total frames: {n_frames}")
 
-    # Compute motor angles via IK for each leg at each frame
-    print("Computing IK for all legs...")
-    all_angles = np.zeros((n_frames, 4, 3))
+    # Compute gait target angles via IK
+    print("Computing IK for gait phase...")
+    gait_angles = np.zeros((len(t_values), 4, 3))
     for leg_idx in range(4):
         print(f"  Leg {leg_idx} ({leg_names[leg_idx]})...")
         prev_theta = [0.0, 0.0, 0.0]
-        for frame in range(n_frames):
-            target_ee = trajectories[leg_idx][frame]
+        for frame in range(len(t_values)):
+            target_ee = interpolate_triangle(triangle_positions[leg_idx], t_values[frame])
             theta = inverse_kinematics_single_leg(
                 target_ee, fk_fns[leg_idx], initial_guess=prev_theta
             )
-            all_angles[frame, leg_idx] = theta
+            gait_angles[frame, leg_idx] = theta
             prev_theta = theta.tolist()
 
-    # Pre-compute all chain positions using the IK-solved motor angles
+    # --- Build full sequence: standup + gait ---
+    standup_steps = 40  # 40 frames for standup (matches 2s at 100Hz scaled to animation)
+    n_gait_frames = len(t_values)
+    n_total_frames = standup_steps + n_gait_frames
+    print(f"Standup frames: {standup_steps}, Gait frames: {n_gait_frames}, Total: {n_total_frames}")
+
+    # Compute all angles for the full sequence
+    all_angles = np.zeros((n_total_frames, 4, 3))
+
+    # Standup phase: cubic interpolation from rest to first gait target
+    first_gait_angles = gait_angles[0]  # (4, 3)
+    for frame in range(standup_steps):
+        alpha = frame / standup_steps
+        # Smooth cubic ease in/out (same as lab_4.py)
+        alpha = 3 * alpha**2 - 2 * alpha**3
+        for leg_idx in range(4):
+            rest_angles = initial_joint_positions[leg_idx * 3 : leg_idx * 3 + 3]
+            all_angles[frame, leg_idx] = (
+                rest_angles * (1 - alpha) + first_gait_angles[leg_idx] * alpha
+            )
+
+    # Gait phase: use precomputed IK angles
+    all_angles[standup_steps:] = gait_angles
+
+    # Pre-compute all chain positions using the motor angles
     print("Computing FK chains...")
-    all_positions = np.zeros((n_frames, 4, 4, 3))
-    for frame in range(n_frames):
+    all_positions = np.zeros((n_total_frames, 4, 4, 3))
+    for frame in range(n_total_frames):
         for leg_idx in range(4):
             all_positions[frame, leg_idx] = chain_fns[leg_idx](
                 all_angles[frame, leg_idx]
             )
 
-    # Compute axis limits per leg
+    # Phase labels for each frame
+    phase_labels = []
+    for frame in range(n_total_frames):
+        if frame < standup_steps:
+            phase_labels.append(f"STANDUP {frame + 1}/{standup_steps}")
+        else:
+            gait_frame = frame - standup_steps
+            phase_labels.append(f"GAIT {gait_frame + 1}/{n_gait_frames}")
+
+    # Compute axis limits per leg (over full sequence)
     leg_xlims = []
     leg_zlims = []
     for leg_idx in range(4):
@@ -449,6 +481,15 @@ def main():
         ax.plot(tri_x, tri_z, "g--", linewidth=1.0, alpha=0.6, label="Target triangle")
         ax.plot(wp[:, 0], wp[:, 2], "g.", markersize=6, alpha=0.6)
 
+        # Plot initial rest position (static reference)
+        rest_theta = initial_joint_positions[leg_idx * 3 : leg_idx * 3 + 3]
+        rest_chain = chain_fns[leg_idx](rest_theta)
+        ax.plot(
+            rest_chain[:, 0], rest_chain[:, 2], "m--",
+            linewidth=1.0, alpha=0.5, label="Rest position"
+        )
+        ax.plot(rest_chain[-1, 0], rest_chain[-1, 2], "m^", markersize=7, alpha=0.5)
+
         # Hip origin marker
         ax.plot(
             hip_x_offsets[leg_idx], 0, "ks", markersize=10, zorder=5, label="Hip origin"
@@ -478,7 +519,7 @@ def main():
         ax.legend(loc="upper right", fontsize=7)
 
     plt.suptitle(
-        "Quadruped Trotting Gait Simulation (2D X-Z View, relative to base_link)",
+        "Quadruped Simulation: Standup + Trotting Gait (2D X-Z View)",
         fontsize=13,
     )
     plt.tight_layout()
@@ -509,15 +550,16 @@ def main():
             ee_trails_z[leg_idx].append(zs[-1])
             ee_trail_lines[leg_idx].set_data(ee_trails_x[leg_idx], ee_trails_z[leg_idx])
 
-            # Show motor angles and frame counter
+            # Show motor angles, frame counter, and phase
             theta = all_angles[frame, leg_idx]
             frame_texts[leg_idx].set_text(
-                f"Frame {frame}/{n_frames}\n"
+                f"{phase_labels[frame]}\n"
                 f"\u03b81={theta[0]:+.3f} \u03b82={theta[1]:+.3f} \u03b83={theta[2]:+.3f}"
             )
 
         return linkage_lines + joint_markers + ee_dot + ee_trail_lines + frame_texts
 
+    n_frames = n_total_frames
     anim = FuncAnimation(
         fig,
         update,
@@ -536,8 +578,7 @@ def main():
     # Save sample frames for verification
     frames_dir = "frames"
     os.makedirs(frames_dir, exist_ok=True)
-    sample_frames = list(range(n_frames))
-    for sf in sample_frames:
+    for sf in range(n_frames):
         fig2, axes2 = plt.subplots(2, 2, figsize=(12, 10))
         axes2 = axes2.flatten()
         for leg_idx in range(4):
@@ -557,6 +598,15 @@ def main():
             tri_z = list(wp[:, 2]) + [wp[0, 2]]
             ax.plot(tri_x, tri_z, "g--", linewidth=1.0, alpha=0.6)
             ax.plot(wp[:, 0], wp[:, 2], "g.", markersize=6, alpha=0.6)
+
+            # Rest position reference
+            rest_theta = initial_joint_positions[leg_idx * 3 : leg_idx * 3 + 3]
+            rest_chain = chain_fns[leg_idx](rest_theta)
+            ax.plot(
+                rest_chain[:, 0], rest_chain[:, 2], "m--",
+                linewidth=1.0, alpha=0.5
+            )
+            ax.plot(rest_chain[-1, 0], rest_chain[-1, 2], "m^", markersize=7, alpha=0.5)
 
             # Hip
             ax.plot(hip_x_offsets[leg_idx], 0, "ks", markersize=10, zorder=5)
@@ -578,7 +628,7 @@ def main():
             ax.text(
                 0.02,
                 0.95,
-                f"Frame {sf}/{n_frames}\n"
+                f"{phase_labels[sf]}\n"
                 f"\u03b81={theta[0]:+.3f} \u03b82={theta[1]:+.3f} \u03b83={theta[2]:+.3f}",
                 transform=ax.transAxes,
                 fontsize=8,
@@ -588,7 +638,7 @@ def main():
             )
 
         plt.suptitle(
-            "Quadruped Trotting Gait Simulation (2D X-Z View, relative to base_link)",
+            "Quadruped Simulation: Standup + Trotting Gait (2D X-Z View)",
             fontsize=13,
         )
         plt.tight_layout()
