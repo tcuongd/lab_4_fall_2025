@@ -219,7 +219,7 @@ class InverseKinematics(Node):
             [msg.velocity[msg.name.index(joint)] for joint in joints_of_interest]
         )
 
-    def inverse_kinematics_single_leg(self, target_ee, leg_index, initial_guess=[0, 0, 0]):
+    def inverse_kinematics_single_leg(self, target_ee, leg_index, initial_guess=[0.0, 0.0, 0.0]):
         leg_forward_kinematics = self.fk_functions[leg_index]
 
         def cost_function(theta) -> tuple[float, np.ndarray]:
@@ -228,7 +228,7 @@ class InverseKinematics(Node):
             Calculate the L1 distance between the current and target end-effector positions.
             Return the sum of squared L1 distances as the cost (AKA the squared L2 norm of the error vector).
             """
-            current_ee = leg_forward_kinematics(*theta)
+            current_ee = leg_forward_kinematics(theta)
             l1_errors = np.abs(current_ee - np.array(target_ee))
             return np.sqrt(np.sum(l1_errors**2)), l1_errors
 
@@ -251,7 +251,7 @@ class InverseKinematics(Node):
 
             return grads
 
-        theta = np.array(initial_guess)
+        theta = np.array(initial_guess, dtype=np.float64)
         learning_rate = 5.0
         max_iterations = 20
         # tolerance in metres
