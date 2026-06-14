@@ -392,7 +392,6 @@ class InverseKinematics(Node):
             target_ee_cache.append([])
             target_joint_positions = [0] * 3
             for t in np.arange(0, 1, 0.02):
-                print(t)
                 target_ee = self.interpolate_triangle(t, leg_index)
                 target_joint_positions = self.inverse_kinematics_single_leg(
                     target_ee, leg_index, initial_guess=target_joint_positions
