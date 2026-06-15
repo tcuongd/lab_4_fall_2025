@@ -102,12 +102,13 @@ class InverseKinematics(Node):
         lf_ee_triangle_positions = (
             np.array(
                 [
-                    stand_position_3,  # ground
-                    liftoff_position,  # ground (preparing to lift)
-                    mid_swing_position,  # SWING up
-                    touch_down_position,  # SWING down
-                    stand_position_1,  # ground
-                    stand_position_2,  # ground
+                    stand_position_3,
+                    liftoff_position,
+                    mid_swing_position,
+                    touch_down_position,
+                    stand_position_1,
+                    stand_position_2,
+
                 ]
             )
             + lf_ee_offset
@@ -117,7 +118,7 @@ class InverseKinematics(Node):
         rb_ee_triangle_positions = (
             np.array(
                 [
-                    stand_position_3,  # ground
+                    stand_position_3, # ground
                     liftoff_position,  # ground (preparing to lift)
                     mid_swing_position,  # SWING up
                     touch_down_position,  # SWING down
@@ -164,7 +165,7 @@ class InverseKinematics(Node):
 
         self.pd_timer_period = 1.0 / 200  # 200 Hz
         # Due to `self.counter` incrementing at ik_timer_callback, each full motion lasts 50 / ik_hz
-        self.ik_timer_period = 1.0 / 50  # 50 Hz, 50 steps = 1 second for full motion
+        self.ik_timer_period = 1.0 / 100  # 100 Hz
         self.pd_timer = self.create_timer(self.pd_timer_period, self.pd_timer_callback)
         self.ik_timer = self.create_timer(self.ik_timer_period, self.ik_timer_callback)
 
