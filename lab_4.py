@@ -358,7 +358,6 @@ class InverseKinematics(Node):
             target_joint_positions = [0] * 3
             # This creates 50 steps, so one round of motion will last (ik_timer_period / 50) seconds.
             for t in np.arange(0, 1, 0.02):
-                print(t)
                 target_ee = self.interpolate_triangle(t, leg_index)
                 target_joint_positions = self.inverse_kinematics_single_leg(
                     target_ee, leg_index, initial_guess=target_joint_positions
