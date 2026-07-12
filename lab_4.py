@@ -82,67 +82,35 @@ class InverseKinematics(Node):
         liftoff_position = np.array([-0.05, 0.0, -0.14])
         mid_swing_position = np.array([0.0, 0.0, -0.05])
 
+        grounded_first = [
+            touch_down_position,
+            stand_position_1,
+            stand_position_2,
+            stand_position_3,
+            liftoff_position,
+            mid_swing_position,
+        ]
+        liftoff_first = [
+            stand_position_3,
+            liftoff_position,
+            mid_swing_position,
+            touch_down_position,
+            stand_position_1,
+            stand_position_2,
+        ]
+
         ## trotting
         rf_ee_offset = np.array([0.06, -0.09, 0])
-        rf_ee_triangle_positions = (
-            np.array(
-                [
-                    touch_down_position,
-                    stand_position_1,
-                    stand_position_2,
-                    stand_position_3,
-                    liftoff_position,
-                    mid_swing_position,
-                ]
-            )
-            + rf_ee_offset
-        )
+        rf_ee_triangle_positions = np.array(grounded_first) + rf_ee_offset
 
         lf_ee_offset = np.array([0.06, 0.09, 0])
-        lf_ee_triangle_positions = (
-            np.array(
-                [
-                    stand_position_3,
-                    liftoff_position,
-                    mid_swing_position,
-                    touch_down_position,
-                    stand_position_1,
-                    stand_position_2,
-
-                ]
-            )
-            + lf_ee_offset
-        )
+        lf_ee_triangle_positions = np.array(liftoff_first) + lf_ee_offset
 
         rb_ee_offset = np.array([-0.11, -0.09, 0])
-        rb_ee_triangle_positions = (
-            np.array(
-                [
-                    stand_position_3, # ground
-                    liftoff_position,  # ground (preparing to lift)
-                    mid_swing_position,  # SWING up
-                    touch_down_position,  # SWING down
-                    stand_position_1,  # ground
-                    stand_position_2,  # ground
-                ]
-            )
-            + rb_ee_offset
-        )
+        rb_ee_triangle_positions = np.array(liftoff_first) + rb_ee_offset
 
         lb_ee_offset = np.array([-0.11, 0.09, 0])
-        lb_ee_triangle_positions = (
-            np.array(
-                [
-                    touch_down_position,
-                    stand_position_1,
-                    stand_position_2,
-                    stand_position_3,
-                    liftoff_position,
-                    mid_swing_position,
-                ]
-            )
-            + lb_ee_offset
-        )
+        lb_ee_triangle_positions = np.array(grounded_first) + lb_ee_offset
 
         self.ee_triangle_positions = [
             rf_ee_triangle_positions,
