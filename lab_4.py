@@ -56,6 +56,102 @@ def translation(x: float, y: float, z: float) -> np.ndarray:
     )
 
 
+def lbfgs_minimize(
+    objective,
+    gradient,
+    x0: np.ndarray,
+    m: int = 5,
+    max_iterations: int = 50,
+    tol: float = 1e-10,
+):
+    """
+    Limited-memory BFGS unconstrained minimizer. https://en.wikipedia.org/wiki/Limited-memory_BFGS
+
+    Approximates the inverse Hessian from the `m` most recent gradient/step
+    correction pairs, and uses a backtracking line search satisfying the Armijo condition for convergence.
+
+    Args:
+        objective: callable f(x) -> float, the scalar cost to minimize.
+        gradient: callable g(x) -> np.ndarray, the gradient of the objective.
+        x0: initial guess (array-like).
+        m: number of correction pairs to keep in memory.
+        max_iterations: maximum number of outer iterations.
+        tol: stop once the objective drops below this value.
+
+    Returns:
+        np.ndarray: the parameter vector that minimizes the objective.
+    """
+    x = np.array(x0, dtype=np.float64)
+    grad = gradient(x)
+
+    s_hist = []
+    y_hist = []
+    rho_hist = []
+
+    for _ in range(max_iterations):
+        cost = objective(x)
+        if cost < tol:
+            return x
+
+        # L-BFGS two-loop recursion for search direction
+        q = grad.copy()
+        k = len(s_hist)
+        alphas = np.zeros(k)
+
+        for i in range(k - 1, -1, -1):
+            alphas[i] = rho_hist[i] * s_hist[i].dot(q)
+            q = q - alphas[i] * y_hist[i]
+
+        if k > 0:
+            gamma = s_hist[-1].dot(y_hist[-1]) / y_hist[-1].dot(y_hist[-1])
+        else:
+            gamma = 1.0 / (np.linalg.norm(grad) + 1e-8)
+        z = gamma * q
+
+        for i in range(k):
+            beta_i = rho_hist[i] * y_hist[i].dot(z)
+            z = z + (alphas[i] - beta_i) * s_hist[i]
+
+        direction = -z
+
+        # Fall back to steepest descent if not a descent direction
+        if direction.dot(grad) >= 0:
+            direction = -grad
+            s_hist.clear()
+            y_hist.clear()
+            rho_hist.clear()
+
+        # Backtracking line search (Armijo condition)
+        alpha = 1.0
+        dg = grad.dot(direction)
+        for _ in range(15):
+            if objective(x + alpha * direction) <= cost + 1e-4 * alpha * dg:
+                break
+            alpha *= 0.5
+
+        # Update position and gradient
+        s = alpha * direction
+        x_new = x + s
+        grad_new = gradient(x_new)
+        y = grad_new - grad
+
+        # Store correction pair if curvature condition holds
+        ys = y.dot(s)
+        if ys > 1e-10:
+            if len(s_hist) >= m:
+                s_hist.pop(0)
+                y_hist.pop(0)
+                rho_hist.pop(0)
+            s_hist.append(s.copy())
+            y_hist.append(y.copy())
+            rho_hist.append(1.0 / ys)
+
+        x = x_new
+        grad = grad_new
+
+    return x
+
+
 class InverseKinematics(Node):
     def __init__(self):
         super().__init__("inverse_kinematics")
@@ -67,6 +163,10 @@ class InverseKinematics(Node):
         self.command_publisher = self.create_publisher(
             Float64MultiArray, "/forward_command_controller/commands", 10
         )
+
+        # EE positions as a (12,) vector: legs [FR, FL, BR, BL], each as (x, y, z). Reconstruct with reshape(4, 3).
+        self.ee_target_publisher = self.create_publisher(Float64MultiArray, "/ee_target", 10)
+        self.ee_current_publisher = self.create_publisher(Float64MultiArray, "/ee_current", 10)
 
         self.joint_positions = None
         self.joint_velocities = None
@@ -208,11 +308,6 @@ class InverseKinematics(Node):
             )
 
     def inverse_kinematics_single_leg(self, target_ee, leg_index, initial_guess=[0.0, 0.0, 0.0]):
-        """
-        L-BFGS inverse kinematics solver.
-        Approximates the inverse Hessian from recent gradient history,
-        with backtracking line search for guaranteed convergence.
-        """
         leg_forward_kinematics = self.fk_functions[leg_index]
         target = np.array(target_ee)
 
@@ -229,79 +324,14 @@ class InverseKinematics(Node):
                 grad[i] = (objective(theta + e) - objective(theta - e)) / (2 * eps)
             return grad
 
-        theta = np.array(initial_guess, dtype=np.float64)
-        grad = gradient(theta)
-
-        max_iterations = 50
-        tol = 1e-10  # squared error tolerance (0.01mm accuracy)
-        m = 5  # L-BFGS memory size
-
-        s_hist = []
-        y_hist = []
-        rho_hist = []
-
-        for _ in range(max_iterations):
-            cost = objective(theta)
-            if cost < tol:
-                return theta
-
-            # L-BFGS two-loop recursion for search direction
-            q = grad.copy()
-            k = len(s_hist)
-            alphas = np.zeros(k)
-
-            for i in range(k - 1, -1, -1):
-                alphas[i] = rho_hist[i] * s_hist[i].dot(q)
-                q = q - alphas[i] * y_hist[i]
-
-            if k > 0:
-                gamma = s_hist[-1].dot(y_hist[-1]) / y_hist[-1].dot(y_hist[-1])
-            else:
-                gamma = 1.0 / (np.linalg.norm(grad) + 1e-8)
-            z = gamma * q
-
-            for i in range(k):
-                beta_i = rho_hist[i] * y_hist[i].dot(z)
-                z = z + (alphas[i] - beta_i) * s_hist[i]
-
-            direction = -z
-
-            # Fall back to steepest descent if not a descent direction
-            if direction.dot(grad) >= 0:
-                direction = -grad
-                s_hist.clear()
-                y_hist.clear()
-                rho_hist.clear()
-
-            # Backtracking line search (Armijo condition)
-            alpha = 1.0
-            dg = grad.dot(direction)
-            for _ in range(15):
-                if objective(theta + alpha * direction) <= cost + 1e-4 * alpha * dg:
-                    break
-                alpha *= 0.5
-
-            # Update position and gradient
-            s = alpha * direction
-            theta_new = theta + s
-            grad_new = gradient(theta_new)
-            y = grad_new - grad
-
-            # Store correction pair if curvature condition holds
-            ys = y.dot(s)
-            if ys > 1e-10:
-                if len(s_hist) >= m:
-                    s_hist.pop(0)
-                    y_hist.pop(0)
-                    rho_hist.pop(0)
-                s_hist.append(s.copy())
-                y_hist.append(y.copy())
-                rho_hist.append(1.0 / ys)
-
-            theta = theta_new
-            grad = grad_new
-
-        return theta
+        return lbfgs_minimize(
+            objective,
+            gradient,
+            initial_guess,
+            m=5,
+            max_iterations=50,
+            tol=1e-10,
+        )
 
     def interpolate_triangle(self, t, leg_index) -> np.ndarray:
         positions = self.ee_triangle_positions[leg_index]
@@ -349,6 +379,15 @@ class InverseKinematics(Node):
             self.counter = 0
         return target_ee, target_joint_positions
 
+    def publish_ee_positions(self, target_ee, current_ee):
+        target_msg = Float64MultiArray()
+        target_msg.data = np.asarray(target_ee).tolist()
+        self.ee_target_publisher.publish(target_msg)
+
+        current_msg = Float64MultiArray()
+        current_msg.data = np.asarray(current_ee).tolist()
+        self.ee_current_publisher.publish(current_msg)
+
     def ik_timer_callback(self):
         if self.joint_positions is None or self.initial_joint_positions is None:
             return
@@ -356,8 +395,7 @@ class InverseKinematics(Node):
         if not self.standup_complete:
             # Standup phase: interpolate from initial position to first gait target
             alpha = self.standup_counter / self.standup_steps
-            # Smooth cubic interpolation (ease in/out)
-            alpha = 3 * alpha**2 - 2 * alpha**3
+            # Linear interpolation
             first_gait_target = self.target_joint_positions_cache[0]
             self.target_joint_positions = (
                 self.initial_joint_positions * (1 - alpha) + first_gait_target * alpha
@@ -389,6 +427,8 @@ class InverseKinematics(Node):
                 f"Target Angles to EE: {self.forward_kinematics(self.target_joint_positions)}, "
                 f"Current Angles: {self.joint_positions}"
             )
+
+        self.publish_ee_positions(target_ee, current_ee)
 
     def pd_timer_callback(self):
         if self.target_joint_positions is not None:
