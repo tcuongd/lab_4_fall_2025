@@ -395,7 +395,8 @@ class InverseKinematics(Node):
         if not self.standup_complete:
             # Standup phase: interpolate from initial position to first gait target
             alpha = self.standup_counter / self.standup_steps
-            # Linear interpolation
+            # Smooth cubic interpolation (ease in/out)
+            alpha = 3 * alpha**2 - 2 * alpha**3
             first_gait_target = self.target_joint_positions_cache[0]
             self.target_joint_positions = (
                 self.initial_joint_positions * (1 - alpha) + first_gait_target * alpha
